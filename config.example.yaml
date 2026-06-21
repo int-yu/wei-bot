@@ -1,0 +1,120 @@
+app:
+  data_dir: data
+  database_path: data/companion.db
+  log_level: INFO
+  admin_enabled: true
+  admin_host: 127.0.0.1
+  admin_port: 8765
+  admin_username: admin
+  admin_password: ${ADMIN_PASSWORD:admin}
+
+# Backward-compatible single-provider block. If `models` is absent, this is used.
+deepseek:
+  api_key: ${DEEPSEEK_API_KEY}
+  base_url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+  model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+  max_tokens: 1024
+  temperature: 0.7
+  timeout_seconds: 60
+
+models:
+  active_provider: deepseek
+  max_tokens: 1024
+  temperature: 0.7
+  timeout_seconds: 60
+  providers:
+    deepseek:
+      api_format: openai_compatible
+      api_key: ${DEEPSEEK_API_KEY}
+      base_url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+      model: ${DEEPSEEK_MODEL:deepseek-v4-flash}
+      extra_body:
+        thinking:
+          type: disabled
+    openai:
+      api_format: openai_compatible
+      api_key: ${OPENAI_API_KEY}
+      base_url: https://api.openai.com/v1
+      model: gpt-4.1-mini
+    qwen:
+      api_format: openai_compatible
+      api_key: ${QWEN_API_KEY}
+      base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+      model: qwen-plus
+    moonshot:
+      api_format: openai_compatible
+      api_key: ${MOONSHOT_API_KEY}
+      base_url: https://api.moonshot.cn/v1
+      model: moonshot-v1-8k
+    zhipu:
+      api_format: openai_compatible
+      api_key: ${ZHIPU_API_KEY}
+      base_url: https://open.bigmodel.cn/api/paas/v4
+      model: glm-4-flash
+    siliconflow:
+      api_format: openai_compatible
+      api_key: ${SILICONFLOW_API_KEY}
+      base_url: https://api.siliconflow.cn/v1
+      model: Qwen/Qwen2.5-7B-Instruct
+    openrouter:
+      api_format: openai_compatible
+      api_key: ${OPENROUTER_API_KEY}
+      base_url: https://openrouter.ai/api/v1
+      model: openai/gpt-4o-mini
+      headers:
+        HTTP-Referer: https://localhost/the-one
+        X-Title: The One WeChat AI
+    local_ollama:
+      api_format: openai_compatible
+      api_key: local
+      base_url: http://127.0.0.1:11434/v1
+      model: qwen2.5:7b
+    custom_openai_compatible:
+      api_format: openai_compatible
+      api_key: ${CUSTOM_MODEL_API_KEY}
+      base_url: https://your-api-host.example/v1
+      model: your-model-name
+
+memory:
+  hot_min_turns: 20
+  hot_max_turns: 40
+  context_token_budget: 12000
+  compression_trigger_ratio: 0.7
+  long_term_extract_every_turns: 4
+
+wechat:
+  base_url: https://ilinkai.weixin.qq.com
+  channel_version: 2.4.3
+  app_client_version: "132099"
+  bot_agent: the-one-wechat-ai/0.1.0
+  qrcode_scan_timeout_seconds: 600
+  show_typing: true
+
+bot:
+  default_ai_name: The One
+  default_persona: >
+    你是用户微信里的一个 AI 联系人。你自然、克制、真实地对话。
+    不编造事实；不知道就说不知道。用户偏好简短时保持简短。
+  system_rules: >
+    你通过微信私聊用户。不要说自己是网页或服务器。
+    回答前结合已知人设、长期记忆和最近上下文。
+    如发现用户提供了新的稳定事实、偏好或重要事件，用自然语言回复即可，系统会另行记忆。
+
+plugins:
+  enabled:
+    proactive_response: true
+  config:
+    proactive_response:
+      check_interval_seconds: 300
+      min_inactive_minutes: 30
+      cooldown_minutes: 180
+      max_messages_per_day: 3
+      allow_context_token_reuse: true
+      quiet_hours_start: "23:30"
+      quiet_hours_end: "08:00"
+      opt_out_patterns:
+        - /mute
+        - 别主动
+        - 不要主动
+        - 不要再主动
+        - 别再主动

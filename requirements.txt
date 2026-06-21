@@ -1,0 +1,6 @@
+aiohttp>=3.9.0
+python-dotenv>=1.0.1
+PyYAML>=6.0.1
+qrcode[pil]>=7.4.2
+pytest>=8.0.0
+
