@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sqlite3
 import uuid
@@ -11,10 +12,43 @@ from .llm import ModelRouter
 from .models import AgentProfile, ChatMessage, StructuredMemory, utc_now_iso
 
 
+RELATION_SCORE_KEYS = {"familiarity", "trust"}
+RELATION_KEY_ALIASES = {
+    "familiarity": "familiarity",
+    "熟悉度": "familiarity",
+    "熟悉": "familiarity",
+    "trust": "trust",
+    "信任": "trust",
+    "信任度": "trust",
+    "信任等级": "trust",
+}
+
+
 def estimate_tokens(text: str) -> int:
     chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
     other_chars = max(0, len(text) - chinese_chars)
     return max(1, chinese_chars + other_chars // 4)
+
+
+def _normalize_relation_key(key: str) -> str:
+    clean_key = key.strip()
+    return RELATION_KEY_ALIASES.get(clean_key.lower(), clean_key)
+
+
+def _parse_relation_score(value: str | int | float | None) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    match = re.fullmatch(r"(-?\d+(?:\.\d+)?)(?:\s*(?:/100|%))?", text)
+    if not match:
+        return None
+    score = int(round(float(match.group(1))))
+    return max(0, min(100, score))
+
+
+def _relation_score(value: str | int | float | None, default: int = 0) -> int:
+    score = _parse_relation_score(value)
+    return default if score is None else score
 
 
 class MemoryStore:
@@ -302,6 +336,19 @@ class MemoryStore:
 
     def upsert_structured(self, wx_user_id: str, memory: StructuredMemory, source_message_id: int | None = None) -> None:
         now = utc_now_iso()
+        if memory.kind == "relation":
+            key = _normalize_relation_key(memory.key)
+            if key in RELATION_SCORE_KEYS:
+                score = _parse_relation_score(memory.value)
+                if score is None:
+                    logging.warning(
+                        "[memory] ignored invalid relation score user=%s key=%s value=%r",
+                        wx_user_id,
+                        memory.key,
+                        memory.value,
+                    )
+                    return
+                memory = StructuredMemory("relation", key, str(score), memory.confidence)
         if memory.kind == "event":
             key = f"{memory.key}:{now}:{source_message_id or uuid.uuid4().hex[:8]}"
             self.conn.execute(
@@ -328,8 +375,8 @@ class MemoryStore:
 
     def relation_delta(self, wx_user_id: str, familiarity_delta: int = 1, trust_delta: int = 0) -> None:
         existing = {m.key: m.value for m in self.list_structured(wx_user_id) if m.kind == "relation"}
-        familiarity = max(0, min(100, int(existing.get("familiarity", "0")) + familiarity_delta))
-        trust = max(0, min(100, int(existing.get("trust", "0")) + trust_delta))
+        familiarity = max(0, min(100, _relation_score(existing.get("familiarity"), 0) + familiarity_delta))
+        trust = max(0, min(100, _relation_score(existing.get("trust"), 0) + trust_delta))
         self.upsert_structured(wx_user_id, StructuredMemory("relation", "familiarity", str(familiarity), 0.9))
         self.upsert_structured(wx_user_id, StructuredMemory("relation", "trust", str(trust), 0.9))
 

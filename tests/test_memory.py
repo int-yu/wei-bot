@@ -45,6 +45,38 @@ def test_structured_memory_rules(tmp_path: Path) -> None:
     store.close()
 
 
+def test_relation_delta_repairs_invalid_relation_score(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "test.db", settings())
+    now = "2026-06-21T00:00:00+00:00"
+    store.conn.execute(
+        """
+        INSERT INTO structured_memories(
+            wx_user_id, kind, key, value, confidence, created_at, updated_at, source_message_id
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        ("user-a", "relation", "trust", "增加，乐于接受建议和提供指导", 0.7, now, now, None),
+    )
+    store.conn.commit()
+
+    store.relation_delta("user-a", familiarity_delta=1)
+
+    memories = {m.key: m.value for m in store.list_structured("user-a") if m.kind == "relation"}
+    assert memories["familiarity"] == "1"
+    assert memories["trust"] == "0"
+    store.close()
+
+
+def test_invalid_relation_score_is_not_stored(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "test.db", settings())
+    store.upsert_structured("user-a", StructuredMemory("relation", "trust", "增加，乐于接受建议和提供指导"))
+    store.upsert_structured("user-a", StructuredMemory("relation", "信任度", "72"))
+
+    memories = {m.key: m.value for m in store.list_structured("user-a") if m.kind == "relation"}
+    assert memories == {"trust": "72"}
+    store.close()
+
+
 def test_should_compress_after_hot_window_exceeded(tmp_path: Path) -> None:
     store = MemoryStore(tmp_path / "test.db", settings())
     for index in range(10):
@@ -61,4 +93,3 @@ def test_should_compress_after_hot_window_exceeded(tmp_path: Path) -> None:
 def test_token_estimate_is_positive() -> None:
     assert estimate_tokens("你好") >= 2
     assert estimate_tokens("hello world") >= 1
-
