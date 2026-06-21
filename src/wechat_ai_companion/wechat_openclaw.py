@@ -4,6 +4,7 @@ import asyncio
 import base64
 import io
 import json
+import logging
 import random
 import urllib.request
 from dataclasses import dataclass
@@ -39,6 +40,19 @@ class OpenClawWeChatClient:
         self.get_updates_buf = ""
         self.typing_tickets: dict[str, str] = {}
 
+    def attach_session(self, *, bot_token: str, base_url: str, get_updates_buf: str = "") -> None:
+        self.bot_token = bot_token
+        self.base_url = base_url or self.settings.base_url
+        self.get_updates_buf = get_updates_buf or ""
+        self.typing_tickets.clear()
+
+    def export_session(self) -> dict[str, str]:
+        return {
+            "bot_token": self.bot_token or "",
+            "base_url": self.base_url,
+            "get_updates_buf": self.get_updates_buf,
+        }
+
     def _headers(self, token: str | None = None) -> dict[str, str]:
         uin = str(random.randint(0, 0xFFFFFFFF))
         headers = {
@@ -58,9 +72,16 @@ class OpenClawWeChatClient:
             "bot_agent": self.settings.bot_agent,
         }
 
-    async def _get(self, path: str, *, token: str | None = None, base_url: str | None = None) -> dict[str, Any]:
+    async def _get(
+        self,
+        path: str,
+        *,
+        token: str | None = None,
+        base_url: str | None = None,
+        timeout_seconds: int | None = None,
+    ) -> dict[str, Any]:
         url = f"{base_url or self.base_url}/{path}"
-        async with _client_session() as session:
+        async with _client_session(timeout_seconds=timeout_seconds) as session:
             async with session.get(url, headers=self._headers(token)) as response:
                 return await _json_response(response)
 
@@ -71,9 +92,10 @@ class OpenClawWeChatClient:
         *,
         token: str | None = None,
         base_url: str | None = None,
+        timeout_seconds: int | None = None,
     ) -> dict[str, Any]:
         url = f"{base_url or self.base_url}/{path}"
-        async with _client_session() as session:
+        async with _client_session(timeout_seconds=timeout_seconds) as session:
             async with session.post(url, json=body, headers=self._headers(token)) as response:
                 return await _json_response(response)
 
@@ -166,6 +188,30 @@ class OpenClawWeChatClient:
             )
         return messages
 
+    async def probe_session(self, timeout_seconds: int) -> bool:
+        if not self.bot_token:
+            return False
+        try:
+            result = await self._post(
+                "ilink/bot/getupdates",
+                {"get_updates_buf": self.get_updates_buf, "base_info": self._base_info()},
+                token=self.bot_token,
+                base_url=self.base_url,
+                timeout_seconds=timeout_seconds,
+            )
+        except (asyncio.TimeoutError, TimeoutError, aiohttp.ServerTimeoutError):
+            return True
+        except Exception as exc:
+            logging.info("[wechat] session probe failed: %s", exc)
+            return False
+
+        ret = result.get("ret", 0)
+        errcode = result.get("errcode", 0)
+        if ret not in (0, None) or errcode not in (0, None):
+            logging.info("[wechat] session probe rejected ret=%s errcode=%s result=%s", ret, errcode, result)
+            return False
+        return True
+
     async def send_text(self, to_user_id: str, context_token: str, text: str) -> None:
         if not self.bot_token:
             raise RuntimeError("WeChat client is not logged in.")
@@ -226,8 +272,10 @@ async def _json_response(response: aiohttp.ClientResponse) -> dict[str, Any]:
         return {}
 
 
-def _client_session(**kwargs: Any) -> aiohttp.ClientSession:
+def _client_session(timeout_seconds: int | None = None, **kwargs: Any) -> aiohttp.ClientSession:
     connector = aiohttp.TCPConnector(resolver=aiohttp.ThreadedResolver())
+    if timeout_seconds is not None:
+        kwargs["timeout"] = aiohttp.ClientTimeout(total=timeout_seconds)
     return aiohttp.ClientSession(connector=connector, trust_env=True, **kwargs)
 
 

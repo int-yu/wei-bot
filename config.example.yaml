@@ -89,6 +89,9 @@ wechat:
   bot_agent: the-one-wechat-ai/0.1.0
   qrcode_scan_timeout_seconds: 600
   show_typing: true
+  restore_session: true
+  session_duration_seconds: 86400
+  restore_probe_timeout_seconds: 8
 
 bot:
   default_ai_name: The One

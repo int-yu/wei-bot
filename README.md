@@ -1,118 +1,107 @@
 # The One WeChat AI Companion
 
-这是一个基于微信 OpenClaw/Claw iLink 协议层的个人 AI 联系人项目。运行后通过终端二维码扫码连接微信，AI 在微信里表现为一个联系人。当前实现以文本私聊为主，主要调用 DeepSeek。
+基于微信 OpenClaw / Claw iLink 协议层的个人 AI 联系人项目。运行后通过二维码连接微信，AI 在微信里表现为一个联系人。当前以文本私聊为主。
 
 ## 核心能力
 
 - 扫码连接微信 ClawBot / OpenClaw iLink 服务。
-- 一个微信号绑定一个 AI：每个 `from_user_id` 有独立人设、对话和记忆。
-- 支持用户在微信里用 `/persona ...` 自定义 AI 人设。
-- 三层记忆：
-  - 热上下文：默认保留最近 20 到 40 轮对话。
-  - 中期摘要：上下文达到预算 70% 或窗口超限时，压缩较早对话。
-  - 长期结构化记忆：抽取 `profile`、`preference`、`event`、`relation`。
-- SQLite 本地持久化，不依赖外部数据库。
-
-## 目录
-
-```text
-src/wechat_ai_companion/
-  bot.py                 # Bot 编排与微信指令
-  config.py              # YAML/env 配置加载
-  llm.py                 # DeepSeek OpenAI-compatible 客户端
-  memory.py              # 三层记忆与 SQLite 存储
-  models.py              # 数据模型
-  wechat_openclaw.py     # 微信 OpenClaw/iLink 协议接入
-  main.py                # CLI 入口
-```
-
-参考项目 `weixin-ClawBot-API-main` 保留在目录中，本项目没有直接修改它。
+- 一个微信号绑定一个 AI，人设、对话和记忆互相隔离。
+- 支持三层记忆：热上下文、中期摘要、长期结构化记忆。
+- 支持多模型配置和运行时切换，兼容 OpenAI Chat Completions 格式。
+- 支持插件机制，内置主动响应插件。
+- 提供本地 Web 管理后台。
+- 支持重启后优先恢复旧微信连接，失败或过期再扫码。
 
 ## 启动
 
 ```powershell
 cd D:\codex\the_one
-python -m venv .venv
-.\.venv\Scripts\python -m pip install -r requirements.txt
+python -m pip install -e .
 Copy-Item .env.example .env
 Copy-Item config.example.yaml config.yaml
+python -m wechat_ai_companion.main
 ```
 
-编辑 `.env`，填入 `DEEPSEEK_API_KEY`。默认模型使用 DeepSeek 官方当前 OpenAI 格式模型名 `deepseek-v4-flash`。然后运行：
+编辑 `.env`，填入实际 API Key。不要提交 `.env`、`config.yaml` 或 `data/`。
 
-```powershell
-.\.venv\Scripts\python -m wechat_ai_companion.main
+## 微信连接恢复
+
+程序默认会把微信 iLink session 保存到本地 SQLite。重启时流程为：
+
+```text
+启动 -> 读取本地 session -> 探测 getupdates
+  -> 成功：直接进入监听
+  -> 失败或过期：显示二维码重新扫码
 ```
 
-如果使用可编辑安装：
+默认按 24 小时有效期处理。恢复出来的连接如果连续轮询失败 3 次，会自动放弃旧连接并重新扫码。
 
-```powershell
-.\.venv\Scripts\python -m pip install -e .
-.\.venv\Scripts\the-one
+配置项：
+
+```yaml
+wechat:
+  restore_session: true
+  session_duration_seconds: 86400
+  restore_probe_timeout_seconds: 8
 ```
 
-## 微信指令
+`bot_token` 保存在本地 `data/companion.db`，该目录已被 `.gitignore` 排除。
 
-- `/help`：查看指令。
-- `/persona`：查看当前微信号绑定的 AI 人设。
-- `/persona 人设内容`：更新当前微信号绑定的 AI 人设。
-- `/memory`：查看中期摘要和长期结构化记忆。
-- `/model`：查看当前模型。
-- `/model list`：查看可切换模型。
-- `/model switch 名称`：切换模型提供商，切换结果会持久化。
-- `/reset_hot`：清空热上下文窗口标记，长期记忆和中期摘要不受影响。
+## Web 管理后台
 
-## 模型
-
-模型配置位于 `config.yaml` 的 `models` 段。当前支持 OpenAI-compatible Chat Completions 格式，已提供 DeepSeek、OpenAI、通义千问兼容模式、Moonshot、智谱、SiliconFlow、OpenRouter、Ollama/local 和自定义 API 模板。详细说明见 `MODELS.md`。
-
-## 插件
-
-插件位于 `src/wechat_ai_companion/plugins/`，启停由 `config.yaml` 的 `plugins.enabled` 控制。当前内置 `proactive_response` 主动响应插件，会基于长期记忆、用户习惯、最近对话和不活跃时间判断是否应主动发微信消息。插件开发规范见 `PLUGINS.md`。
-
-## 管理后台
-
-启动 Bot 后，本地后台默认同时启动：
+启动后打开：
 
 ```text
 http://127.0.0.1:8765
 ```
 
-后台需要账号密码登录，默认账号为 `admin`，默认密码来自 `.env` 的 `ADMIN_PASSWORD`，若未配置则为 `admin`。监听地址只绑定本机，避免默认暴露到局域网。
+后台需要账号密码登录。默认账号为 `admin`，默认密码来自 `.env` 的 `ADMIN_PASSWORD`，未配置时为 `admin`。
 
 后台按 Tab 分类：
 
 - 账号：查看绑定用户和当前选择。
 - 模型：切换、编辑和新增模型 API。
-- 人设：查看/编辑当前用户 AI 名称和人设。
+- 人设：查看和编辑当前用户 AI 名称、人设。
 - 插件：开关插件。
-- 记忆：查看长期记忆、中期摘要、热上下文/最近消息。
+- 记忆：查看长期记忆、中期摘要、热上下文和最近消息。
 - 日志：查看最近日志和错误。
 
-后台会定期刷新运行状态，但当输入框、下拉框或文本框正在编辑时不会自动刷新，避免覆盖未保存内容。
+后台会定期刷新运行状态；当输入框、下拉框或文本框正在编辑，或存在未保存内容时，不会自动刷新覆盖输入。
 
-模型管理区支持直接编辑模型配置：
+## 微信指令
 
-- Provider 名称
-- API 格式，目前支持 `openai_compatible`
-- Base URL
-- 模型名
-- API Key
-- Endpoint Path
-- Max Tokens / Temperature / Timeout
-- Headers JSON
-- Extra Body JSON
+- `/help`：查看指令。
+- `/persona`：查看当前 AI 人设。
+- `/persona 人设内容`：更新当前微信号绑定的 AI 人设。
+- `/memory`：查看中期摘要和长期结构化记忆。
+- `/model`：查看当前模型。
+- `/model list`：查看可切换模型。
+- `/model switch 名称`：切换模型提供商。
+- `/mute`：关闭主动消息。
+- `/unmute`：恢复主动消息。
+- `/reset_hot`：清空当前热上下文窗口。
 
-API Key 不会在页面明文回显，只显示掩码。编辑已有模型时，API Key 留空表示保留原密钥；填写新值则覆盖。保存后的模型配置会立即写入运行中的模型路由器，并持久化到本地 SQLite。
+## 模型
 
-可在 `config.yaml` 中调整：
+模型配置位于 `config.yaml` 的 `models` 段。当前支持 `openai_compatible`，示例包含：
 
-```yaml
-app:
-  admin_enabled: true
-  admin_host: 127.0.0.1
-  admin_port: 8765
-```
+- DeepSeek
+- OpenAI
+- 通义千问兼容模式
+- Moonshot
+- 智谱
+- SiliconFlow
+- OpenRouter
+- Ollama / local
+- 自定义 OpenAI-compatible API
+
+详细说明见 [MODELS.md](MODELS.md)。
+
+## 插件
+
+插件位于 `src/wechat_ai_companion/plugins/`，启停由 `config.yaml` 和后台共同控制。当前内置 `proactive_response` 主动响应插件。
+
+详细规范见 [PLUGINS.md](PLUGINS.md)。
 
 ## 主动消息安全策略
 
@@ -137,5 +126,6 @@ app:
 
 - 当前只处理私聊文本消息；疑似群聊消息会跳过。
 - `context_token` 必须使用收到消息里的当前值，项目已在 `send_text` 中处理。
+- 主动消息会复用最近一次用户消息的 `context_token`；如果服务端拒绝旧 token，发送可能失败。
 - OpenClaw/iLink 的服务状态、频率限制和字段可能变化，生产使用前需要做真实账号测试。
-- 不要把 `.env`、`config.yaml` 或数据库提交到版本控制。
+

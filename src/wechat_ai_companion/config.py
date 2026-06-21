@@ -61,6 +61,9 @@ class WeChatSettings:
     bot_agent: str
     qrcode_scan_timeout_seconds: int
     show_typing: bool
+    restore_session: bool
+    session_duration_seconds: int
+    restore_probe_timeout_seconds: int
 
 
 @dataclass(slots=True)
@@ -165,6 +168,9 @@ def load_settings(config_path: str | Path = "config.yaml") -> Settings:
             bot_agent=str(wechat["bot_agent"]),
             qrcode_scan_timeout_seconds=int(wechat["qrcode_scan_timeout_seconds"]),
             show_typing=bool(wechat["show_typing"]),
+            restore_session=bool(wechat.get("restore_session", True)),
+            session_duration_seconds=int(wechat.get("session_duration_seconds", 24 * 3600)),
+            restore_probe_timeout_seconds=int(wechat.get("restore_probe_timeout_seconds", 8)),
         ),
         bot=BotSettings(
             default_ai_name=str(bot["default_ai_name"]),

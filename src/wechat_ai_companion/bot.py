@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import time
 
 from .config import Settings
 from .llm import ModelRouter
@@ -42,19 +44,93 @@ class CompanionBot:
         self._welcomed_users: set[str] = set()
 
     async def run_forever(self) -> None:
-        login = await self.wechat.login()
-        logging.info("[wechat] login succeeded base_url=%s bot_id=%s", login.base_url, login.bot_id)
-        print("登录成功。向这个微信联系人发送消息即可开始对话。")
+        restored = await self._restore_wechat_session()
+        if not restored:
+            login = await self.wechat.login()
+            logging.info("[wechat] login succeeded base_url=%s bot_id=%s", login.base_url, login.bot_id)
+            self._save_wechat_session()
+        print("微信连接已建立。向这个微信联系人发送消息即可开始对话。")
         if self.plugin_manager:
             await self.plugin_manager.start()
 
+        poll_failures = 0
         while True:
             try:
                 for message in await self.wechat.get_updates():
                     await self.handle_message(message)
+                self._save_wechat_session()
+                poll_failures = 0
             except Exception:
+                poll_failures += 1
                 logging.exception("[wechat] polling loop failed; retrying in 3 seconds")
+                if restored and poll_failures >= 3:
+                    logging.info("[wechat] restored session failed repeatedly; falling back to QR login")
+                    restored = False
+                    login = await self.wechat.login()
+                    logging.info("[wechat] login succeeded base_url=%s bot_id=%s", login.base_url, login.bot_id)
+                    self._save_wechat_session()
+                    poll_failures = 0
                 await asyncio.sleep(3)
+
+    async def _restore_wechat_session(self) -> bool:
+        if not self.settings.wechat.restore_session:
+            logging.info("[wechat] session restore disabled")
+            return False
+        raw = self.memory.get_plugin_state("core_wechat_session", "__global__", "session_json")
+        if not raw:
+            logging.info("[wechat] no saved session; QR login required")
+            return False
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            logging.info("[wechat] saved session is invalid JSON; QR login required")
+            return False
+
+        login_at = float(data.get("login_at") or data.get("saved_at") or 0)
+        age = max(0, time.time() - login_at)
+        if age >= self.settings.wechat.session_duration_seconds:
+            logging.info("[wechat] saved session expired age_seconds=%.0f; QR login required", age)
+            return False
+
+        bot_token = str(data.get("bot_token") or "")
+        base_url = str(data.get("base_url") or self.settings.wechat.base_url)
+        get_updates_buf = str(data.get("get_updates_buf") or "")
+        if not bot_token:
+            logging.info("[wechat] saved session has no token; QR login required")
+            return False
+
+        self.wechat.attach_session(bot_token=bot_token, base_url=base_url, get_updates_buf=get_updates_buf)
+        logging.info("[wechat] probing saved session age_seconds=%.0f base_url=%s", age, base_url)
+        ok = await self.wechat.probe_session(self.settings.wechat.restore_probe_timeout_seconds)
+        if ok:
+            logging.info("[wechat] restored saved session")
+            self._save_wechat_session()
+            return True
+        logging.info("[wechat] saved session rejected; QR login required")
+        return False
+
+    def _save_wechat_session(self) -> None:
+        if not self.wechat.bot_token:
+            return
+        now = time.time()
+        login_at = now
+        raw = self.memory.get_plugin_state("core_wechat_session", "__global__", "session_json")
+        if raw:
+            try:
+                old = json.loads(raw)
+                if old.get("bot_token") == self.wechat.bot_token:
+                    login_at = float(old.get("login_at") or old.get("saved_at") or now)
+            except (json.JSONDecodeError, TypeError, ValueError):
+                login_at = now
+        session = self.wechat.export_session()
+        session["login_at"] = login_at
+        session["saved_at"] = now
+        self.memory.set_plugin_state(
+            "core_wechat_session",
+            "__global__",
+            "session_json",
+            json.dumps(session, ensure_ascii=False),
+        )
 
     async def handle_message(self, message: WeChatInboundMessage) -> None:
         user_id = message.from_user_id
@@ -189,3 +265,4 @@ class CompanionBot:
             self.memory.conn.commit()
             return "已清空热上下文窗口；长期记忆和中期摘要不受影响。"
         return None
+
