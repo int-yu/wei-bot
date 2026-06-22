@@ -106,6 +106,8 @@ bot:
 plugins:
   enabled:
     proactive_response: true
+    weather_monitor: true
+    task_reminder: true
   config:
     proactive_response:
       check_interval_seconds: 300
@@ -121,3 +123,20 @@ plugins:
         - 不要主动
         - 不要再主动
         - 别再主动
+    weather_monitor:
+      check_interval_seconds: 3600
+      run_at: "07:30"
+      timezone: Asia/Shanghai
+      provider: open_meteo
+      location_name: 北京
+      latitude: 39.9042
+      longitude: 116.4074
+      forecast_days: 1
+      request_timeout_seconds: 20
+      write_on_message_if_cached: true
+    task_reminder:
+      check_interval_seconds: 60
+      timezone: Asia/Shanghai
+      allow_context_token_reuse: true
+      schedule_remind_minutes: 15
+      max_due_messages_per_check: 5

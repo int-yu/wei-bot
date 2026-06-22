@@ -432,7 +432,8 @@ HTML = r"""<!doctype html>
     function renderPlugins() {
       document.getElementById('tab-plugins').innerHTML = `<div class="panel"><h3>插件</h3>${state.plugins.map(p => `
         <label><input type="checkbox" ${p.enabled?'checked':''} onchange="setPlugin('${escapeAttr(p.name)}', this.checked)" /> ${escapeHtml(p.name)}</label>
-        <div class="muted">${escapeHtml(p.description)}<br>运行中：${p.running ? '是' : '否'}</div>`).join('<hr>')}</div>`;
+        <div class="muted">${escapeHtml(p.description)}<br>运行中：${p.running ? '是' : '否'}</div>
+        <pre>${escapeHtml(JSON.stringify(p.config || {}, null, 2))}</pre>`).join('<hr>')}</div>`;
     }
 
     function renderMemory() {

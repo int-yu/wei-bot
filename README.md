@@ -79,6 +79,14 @@ http://127.0.0.1:8765
 - `/model switch 名称`：切换模型提供商。
 - `/mute`：关闭主动消息。
 - `/unmute`：恢复主动消息。
+- `/remind 明天 09:00 交作业`：添加一次性提醒。
+- `/todo 买牛奶`：添加无截止时间任务。
+- `/task 明天 18:00 完成实验报告`：添加带截止时间的任务。
+- `/tasks`：查看任务和提醒。
+- `/schedule add 周一 08:00-09:40 高数`：添加课表。
+- `/schedule`：查看课表。
+- `/done ID`：标记完成。
+- `/cancel ID`：取消任务、提醒或课表。
 - `/reset_hot`：清空当前热上下文窗口。
 
 ## 模型
@@ -99,7 +107,11 @@ http://127.0.0.1:8765
 
 ## 插件
 
-插件位于 `src/wechat_ai_companion/plugins/`，启停由 `config.yaml` 和后台共同控制。当前内置 `proactive_response` 主动响应插件。
+插件位于 `src/wechat_ai_companion/plugins/`，启停由 `config.yaml` 和后台共同控制。当前内置：
+
+- `proactive_response`：主动响应插件。
+- `weather_monitor`：每天获取一次天气，并写入热上下文短期记忆。
+- `task_reminder`：记录任务、提醒和课表；到点提醒不计入主动响应插件的每日次数限制。
 
 详细规范见 [PLUGINS.md](PLUGINS.md)。
 
@@ -128,4 +140,3 @@ http://127.0.0.1:8765
 - `context_token` 必须使用收到消息里的当前值，项目已在 `send_text` 中处理。
 - 主动消息会复用最近一次用户消息的 `context_token`；如果服务端拒绝旧 token，发送可能失败。
 - OpenClaw/iLink 的服务状态、频率限制和字段可能变化，生产使用前需要做真实账号测试。
-

@@ -47,6 +47,13 @@ class CompanionPlugin:
     ) -> list[PluginResult]:
         return []
 
+    async def handle_command(
+        self,
+        context: PluginContext,
+        message: WeChatInboundMessage,
+    ) -> str | None:
+        return None
+
     async def after_ai_reply(
         self,
         context: PluginContext,

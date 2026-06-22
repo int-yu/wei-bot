@@ -70,6 +70,7 @@ BUILTIN_PLUGINS = {
 
 - `on_start(context)`：登录成功后调用。
 - `on_message_received(context, message)`：收到微信用户消息后调用。
+- `handle_command(context, message)`：可选命令处理；返回字符串时由主 Bot 直接发送该回复，并跳过普通 AI 回复。
 - `after_ai_reply(context, message, reply)`：AI 正常回复发送后调用。
 - `after_memory_maintenance(context, wx_user_id, extracted_count, compressed)`：长期记忆提取和中期摘要压缩后调用。
 - `background_loop(context, stop_event)`：后台循环任务，适合提醒、主动响应、定时同步。
@@ -101,3 +102,45 @@ plugins:
       allow_context_token_reuse: false
 ```
 
+## 天气监测插件
+
+内置插件：`weather_monitor`
+
+工作方式：
+1. 每天到达 `run_at` 后请求一次天气接口。
+2. 将天气摘要写入每个已知用户的热上下文，角色为 `system`，因此 AI 当天回复时可以自然参考。
+3. 如果当天先获取了天气，后来才有新用户发消息，插件会把缓存的当天天气补写给该用户。
+
+默认使用 Open-Meteo 经纬度接口，不需要 API Key。城市需要通过经纬度配置：
+
+```yaml
+plugins:
+  enabled:
+    weather_monitor: true
+  config:
+    weather_monitor:
+      run_at: "07:30"
+      timezone: Asia/Shanghai
+      location_name: 北京
+      latitude: 39.9042
+      longitude: 116.4074
+```
+
+## 任务和提醒插件
+
+内置插件：`task_reminder`
+
+支持命令：
+
+- `/remind 明天 09:00 交作业`：添加一次性提醒。
+- `/todo 买牛奶`：添加无截止时间任务。
+- `/task 明天 18:00 完成实验报告`：添加带截止时间的任务。
+- `/tasks`：查看未完成任务和提醒。
+- `/schedule add 周一 08:00-09:40 高数`：添加每周课表。
+- `/schedule`：查看课表。
+- `/done ID`：标记完成。
+- `/cancel ID`：取消任务、提醒或课表。
+
+也支持明确触发词，例如“提醒我明天下午3点交作业”“帮我记住周一 08:00-09:40 高数课表”。普通闲聊不会被强行猜成任务。
+
+提醒消息由 `task_reminder` 自己发送，不会计入 `proactive_response` 的每日主动消息上限。它仍然受微信 iLink `context_token` 限制：用户至少需要先发过一条消息，插件才有可复用的发送 token。

@@ -23,6 +23,10 @@ HELP_TEXT = (
     "/model switch 名称 - 切换模型提供商\n"
     "/mute - 关闭主动消息\n"
     "/unmute - 恢复主动消息\n"
+    "/remind 时间 内容 - 添加提醒，例如 /remind 明天 09:00 交作业\n"
+    "/todo 内容 - 添加无截止时间任务\n"
+    "/tasks - 查看任务和提醒\n"
+    "/schedule add 周一 08:00-09:40 课程名 - 添加课表\n"
     "/reset_hot - 清空当前热上下文窗口"
 )
 
@@ -159,6 +163,13 @@ class CompanionBot:
             logging.info("[message:out] user=%s text=%s", user_id, command_reply)
             return
 
+        if self.plugin_manager:
+            plugin_reply = await self.plugin_manager.handle_command(message)
+            if plugin_reply is not None:
+                await self.wechat.send_text(user_id, message.context_token, plugin_reply)
+                logging.info("[message:out] user=%s text=%s", user_id, plugin_reply)
+                return
+
         user_message_id = self.memory.add_message(user_id, "user", text)
         self.memory.relation_delta(user_id, familiarity_delta=1)
         logging.info("[memory] hot_context appended user=%s message_id=%s", user_id, user_message_id)
@@ -265,4 +276,3 @@ class CompanionBot:
             self.memory.conn.commit()
             return "已清空热上下文窗口；长期记忆和中期摘要不受影响。"
         return None
-

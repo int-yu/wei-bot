@@ -9,10 +9,14 @@ from ..memory import MemoryStore
 from ..wechat_openclaw import OpenClawWeChatClient, WeChatInboundMessage
 from .base import CompanionPlugin, PluginContext, PluginResult
 from .proactive_response import ProactiveResponsePlugin
+from .task_reminder import TaskReminderPlugin
+from .weather_monitor import WeatherMonitorPlugin
 
 
 BUILTIN_PLUGINS: dict[str, type[CompanionPlugin]] = {
     ProactiveResponsePlugin.name: ProactiveResponsePlugin,
+    WeatherMonitorPlugin.name: WeatherMonitorPlugin,
+    TaskReminderPlugin.name: TaskReminderPlugin,
 }
 
 
@@ -100,6 +104,16 @@ class PluginManager:
             if not self.is_enabled(name):
                 continue
             self._log_results(await plugin.on_message_received(self.context, message))
+
+    async def handle_command(self, message: WeChatInboundMessage) -> str | None:
+        for name, plugin in self.plugins.items():
+            if not self.is_enabled(name):
+                continue
+            reply = await plugin.handle_command(self.context, message)
+            if reply is not None:
+                logging.info("[plugin:%s] handled_command user=%s", name, message.from_user_id)
+                return reply
+        return None
 
     async def after_ai_reply(self, message: WeChatInboundMessage, reply: str) -> None:
         for name, plugin in self.plugins.items():

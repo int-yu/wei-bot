@@ -513,7 +513,7 @@ class MemoryStore:
         )
         messages: list[dict[str, str]] = [{"role": "system", "content": system}]
         for item in hot:
-            if item.role in {"user", "assistant"}:
+            if item.role in {"user", "assistant", "system"}:
                 messages.append({"role": item.role, "content": item.content})
         messages.append({"role": "user", "content": user_text})
         return messages

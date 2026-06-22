@@ -130,7 +130,11 @@ def load_settings(config_path: str | Path = "config.yaml") -> Settings:
     wechat = cfg["wechat"]
     bot = cfg["bot"]
     plugins = cfg.get("plugins", {})
-    enabled_plugins = {"proactive_response": True}
+    enabled_plugins = {
+        "proactive_response": True,
+        "weather_monitor": True,
+        "task_reminder": True,
+    }
     enabled_plugins.update({str(key): bool(value) for key, value in plugins.get("enabled", {}).items()})
 
     data_dir = Path(app["data_dir"])
