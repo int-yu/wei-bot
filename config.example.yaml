@@ -105,10 +105,18 @@ bot:
 
 plugins:
   enabled:
+    flow_state: true
     proactive_response: true
     weather_monitor: true
     task_reminder: true
   config:
+    flow_state:
+      check_interval_seconds: 1
+      min_silence_seconds: 6
+      max_wait_seconds: 45
+      max_buffer_messages: 8
+      decision_model_enabled: true
+      decision_max_tokens: 180
     proactive_response:
       check_interval_seconds: 300
       min_inactive_minutes: 30

@@ -9,6 +9,7 @@ from .config import Settings
 from .llm import ModelRouter
 from .memory import MemoryStore
 from .plugins import PluginManager
+from .reply_format import DEFAULT_MAX_REPLY_SEGMENTS, build_reply_format_rules, split_reply_segments
 from .wechat_openclaw import OpenClawWeChatClient, WeChatInboundMessage
 
 
@@ -32,6 +33,8 @@ HELP_TEXT = (
 
 
 class CompanionBot:
+    reply_segment_delay_seconds = 0.8
+
     def __init__(
         self,
         settings: Settings,
@@ -46,6 +49,9 @@ class CompanionBot:
         self.llm = llm
         self.plugin_manager = plugin_manager
         self._welcomed_users: set[str] = set()
+        self._interrupt_versions: dict[str, int] = {}
+        if self.plugin_manager:
+            self.plugin_manager.set_deferred_reply_handler(self.handle_deferred_reply)
 
     async def run_forever(self) -> None:
         restored = await self._restore_wechat_session()
@@ -139,6 +145,7 @@ class CompanionBot:
     async def handle_message(self, message: WeChatInboundMessage) -> None:
         user_id = message.from_user_id
         text = message.text.strip()
+        self._mark_incoming(user_id)
         logging.info("[message:in] user=%s text=%s", user_id, text)
         if self.plugin_manager:
             await self.plugin_manager.on_message_received(message)
@@ -170,26 +177,63 @@ class CompanionBot:
                 logging.info("[message:out] user=%s text=%s", user_id, plugin_reply)
                 return
 
-        user_message_id = self.memory.add_message(user_id, "user", text)
+        if self.plugin_manager and await self.plugin_manager.maybe_defer_reply(message):
+            return
+
+        await self._reply_to_user(message, text, source="normal")
+
+    async def handle_deferred_reply(self, message: WeChatInboundMessage, user_text: str) -> None:
+        await self._reply_to_user(message, user_text, source="flow_state")
+
+    async def _reply_to_user(self, message: WeChatInboundMessage, user_text: str, *, source: str) -> None:
+        user_id = message.from_user_id
+        agent = self.memory.get_or_create_agent(
+            user_id,
+            self.settings.bot.default_ai_name,
+            self.settings.bot.default_persona,
+        )
+        user_message_id = self.memory.add_message(user_id, "user", user_text)
         self.memory.relation_delta(user_id, familiarity_delta=1)
         logging.info("[memory] hot_context appended user=%s message_id=%s", user_id, user_message_id)
 
+        reply_version = self._interrupt_versions.get(user_id, 0)
+        sent_segments: list[str] = []
         await self.wechat.set_typing(user_id, message.context_token, 1)
         try:
             prompt_messages = self.memory.build_prompt_messages(
                 agent,
-                self.settings.bot.system_rules,
-                text,
+                f"{self.settings.bot.system_rules}\n\n{build_reply_format_rules(DEFAULT_MAX_REPLY_SEGMENTS)}",
+                user_text,
             )
-            logging.info("[ai] request user=%s prompt_messages=%s", user_id, len(prompt_messages))
+            logging.info("[ai] request user=%s source=%s prompt_messages=%s", user_id, source, len(prompt_messages))
             response = await self.llm.chat(prompt_messages)
-            reply = response.content.strip()
-            assistant_message_id = self.memory.add_message(user_id, "assistant", reply)
-            logging.info("[message:out] user=%s text=%s", user_id, reply)
-            logging.info("[memory] hot_context appended user=%s message_id=%s", user_id, assistant_message_id)
-            await self.wechat.send_text(user_id, message.context_token, reply)
-            if self.plugin_manager:
-                await self.plugin_manager.after_ai_reply(message, reply)
+            segments = split_reply_segments(response.content)
+            if not segments:
+                logging.info("[ai] empty reply after segmentation user=%s", user_id)
+            for index, segment in enumerate(segments):
+                if index > 0:
+                    await asyncio.sleep(self.reply_segment_delay_seconds)
+                if self._was_interrupted(user_id, reply_version):
+                    logging.info(
+                        "[message:out] interrupted user=%s sent=%s remaining=%s",
+                        user_id,
+                        len(sent_segments),
+                        len(segments) - len(sent_segments),
+                    )
+                    break
+                await self.wechat.send_text(user_id, message.context_token, segment)
+                assistant_message_id = self.memory.add_message(user_id, "assistant", segment)
+                sent_segments.append(segment)
+                logging.info(
+                    "[message:out] user=%s segment=%s/%s text=%s",
+                    user_id,
+                    index + 1,
+                    len(segments),
+                    segment,
+                )
+                logging.info("[memory] hot_context appended user=%s message_id=%s", user_id, assistant_message_id)
+            if sent_segments and self.plugin_manager:
+                await self.plugin_manager.after_ai_reply(message, "\n".join(sent_segments))
         finally:
             await self.wechat.set_typing(user_id, message.context_token, 2)
 
@@ -223,6 +267,12 @@ class CompanionBot:
                 extracted_count=len(extracted),
                 compressed=bool(compression),
             )
+
+    def _mark_incoming(self, user_id: str) -> None:
+        self._interrupt_versions[user_id] = self._interrupt_versions.get(user_id, 0) + 1
+
+    def _was_interrupted(self, user_id: str, reply_version: int) -> bool:
+        return self._interrupt_versions.get(user_id, 0) != reply_version
 
     async def _handle_command(self, message: WeChatInboundMessage, current_persona: str) -> str | None:
         text = message.text.strip()

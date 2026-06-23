@@ -13,8 +13,13 @@ src/wechat_ai_companion/plugins/
 ```yaml
 plugins:
   enabled:
+    flow_state: true
     proactive_response: true
   config:
+    flow_state:
+      min_silence_seconds: 6
+      max_wait_seconds: 45
+      decision_model_enabled: true
     proactive_response:
       check_interval_seconds: 300
       min_inactive_minutes: 30
@@ -61,6 +66,7 @@ class MyPlugin(CompanionPlugin):
 
 ```python
 BUILTIN_PLUGINS = {
+    FlowStatePlugin.name: FlowStatePlugin,
     ProactiveResponsePlugin.name: ProactiveResponsePlugin,
     MyPlugin.name: MyPlugin,
 }
@@ -71,6 +77,7 @@ BUILTIN_PLUGINS = {
 - `on_start(context)`：登录成功后调用。
 - `on_message_received(context, message)`：收到微信用户消息后调用。
 - `handle_command(context, message)`：可选命令处理；返回字符串时由主 Bot 直接发送该回复，并跳过普通 AI 回复。
+- `maybe_defer_reply(context, message)`：可选心流控制；返回 `True` 时主 Bot 暂不回复，由插件后续调用延迟回复回调。
 - `after_ai_reply(context, message, reply)`：AI 正常回复发送后调用。
 - `after_memory_maintenance(context, wx_user_id, extracted_count, compressed)`：长期记忆提取和中期摘要压缩后调用。
 - `background_loop(context, stop_event)`：后台循环任务，适合提醒、主动响应、定时同步。
@@ -81,6 +88,35 @@ BUILTIN_PLUGINS = {
 - `wechat`：微信发送/轮询客户端。
 - `memory`：SQLite 记忆存储。
 - `llm`：DeepSeek 客户端。
+- `deferred_reply_handler`：主 Bot 提供的延迟回复回调，心流类插件可以在后台判断完成后调用。
+
+## 心流插件
+
+内置插件：`flow_state`
+
+工作方式：
+
+1. 普通聊天消息先进入心流缓存，不立刻触发 AI 回复。
+2. 用户停顿超过 `min_silence_seconds` 后，插件会请模型判断“用户是否暂时讲完了”。
+3. 如果模型认为还没讲完，会继续等待；超过 `max_wait_seconds` 会强制回复，避免一直卡住。
+4. 命令、插件命令不会进入心流缓存。
+5. 主 Bot 生成回复后会拆成短消息发送；如果发送过程中收到用户新消息，剩余片段会停止发送。
+
+配置示例：
+
+```yaml
+plugins:
+  enabled:
+    flow_state: true
+  config:
+    flow_state:
+      check_interval_seconds: 1
+      min_silence_seconds: 6
+      max_wait_seconds: 45
+      max_buffer_messages: 8
+      decision_model_enabled: true
+      decision_max_tokens: 180
+```
 
 ## 主动响应插件
 

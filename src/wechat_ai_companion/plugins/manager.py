@@ -7,13 +7,15 @@ from ..config import Settings
 from ..llm import ModelRouter
 from ..memory import MemoryStore
 from ..wechat_openclaw import OpenClawWeChatClient, WeChatInboundMessage
-from .base import CompanionPlugin, PluginContext, PluginResult
+from .base import CompanionPlugin, DeferredReplyHandler, PluginContext, PluginResult
+from .flow_state import FlowStatePlugin
 from .proactive_response import ProactiveResponsePlugin
 from .task_reminder import TaskReminderPlugin
 from .weather_monitor import WeatherMonitorPlugin
 
 
 BUILTIN_PLUGINS: dict[str, type[CompanionPlugin]] = {
+    FlowStatePlugin.name: FlowStatePlugin,
     ProactiveResponsePlugin.name: ProactiveResponsePlugin,
     WeatherMonitorPlugin.name: WeatherMonitorPlugin,
     TaskReminderPlugin.name: TaskReminderPlugin,
@@ -34,6 +36,9 @@ class PluginManager:
         self._tasks: dict[str, asyncio.Task] = {}
         self._stop_event = asyncio.Event()
         self._started = False
+
+    def set_deferred_reply_handler(self, handler: DeferredReplyHandler) -> None:
+        self.context.deferred_reply_handler = handler
 
     def _load_plugins(self, settings: Settings) -> dict[str, CompanionPlugin]:
         loaded: dict[str, CompanionPlugin] = {}
@@ -114,6 +119,15 @@ class PluginManager:
                 logging.info("[plugin:%s] handled_command user=%s", name, message.from_user_id)
                 return reply
         return None
+
+    async def maybe_defer_reply(self, message: WeChatInboundMessage) -> bool:
+        for name, plugin in self.plugins.items():
+            if not self.is_enabled(name):
+                continue
+            if await plugin.maybe_defer_reply(self.context, message):
+                logging.info("[plugin:%s] deferred_reply user=%s", name, message.from_user_id)
+                return True
+        return False
 
     async def after_ai_reply(self, message: WeChatInboundMessage, reply: str) -> None:
         for name, plugin in self.plugins.items():

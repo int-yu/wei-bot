@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..config import Settings
 from ..llm import ModelRouter
 from ..memory import MemoryStore
 from ..wechat_openclaw import OpenClawWeChatClient, WeChatInboundMessage
+
+
+DeferredReplyHandler = Callable[[WeChatInboundMessage, str], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -24,6 +28,7 @@ class PluginContext:
     wechat: OpenClawWeChatClient
     memory: MemoryStore
     llm: ModelRouter
+    deferred_reply_handler: DeferredReplyHandler | None = None
 
 
 class CompanionPlugin:
@@ -53,6 +58,13 @@ class CompanionPlugin:
         message: WeChatInboundMessage,
     ) -> str | None:
         return None
+
+    async def maybe_defer_reply(
+        self,
+        context: PluginContext,
+        message: WeChatInboundMessage,
+    ) -> bool:
+        return False
 
     async def after_ai_reply(
         self,

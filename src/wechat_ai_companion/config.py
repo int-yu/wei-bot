@@ -131,6 +131,7 @@ def load_settings(config_path: str | Path = "config.yaml") -> Settings:
     bot = cfg["bot"]
     plugins = cfg.get("plugins", {})
     enabled_plugins = {
+        "flow_state": True,
         "proactive_response": True,
         "weather_monitor": True,
         "task_reminder": True,

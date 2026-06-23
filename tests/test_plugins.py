@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from wechat_ai_companion.config import MemorySettings
 from wechat_ai_companion.memory import MemoryStore
 from wechat_ai_companion.plugins.base import PluginContext
+from wechat_ai_companion.plugins.flow_state import FlowStatePlugin
 from wechat_ai_companion.plugins.task_reminder import (
     TaskReminderPlugin,
     _parse_due_datetime,
@@ -88,3 +89,29 @@ def test_weather_summary_format() -> None:
     assert "测试城市" in text
     assert "气温22.4℃" in text
     assert "最大降水概率30%" in text
+
+
+def test_flow_state_buffers_and_combines_messages(tmp_path: Path) -> None:
+    store = MemoryStore(tmp_path / "test.db", settings())
+    plugin = FlowStatePlugin(
+        {
+            "min_silence_seconds": 0,
+            "max_wait_seconds": 30,
+            "decision_model_enabled": False,
+        }
+    )
+    context = PluginContext(settings=None, wechat=None, memory=store, llm=None)  # type: ignore[arg-type]
+
+    first = WeChatInboundMessage("user-a", "token-a", "我先说第一段", {})
+    second = WeChatInboundMessage("user-a", "token-b", "还有第二段", {})
+
+    assert asyncio.run(plugin.maybe_defer_reply(context, first)) is True
+    assert asyncio.run(plugin.maybe_defer_reply(context, second)) is True
+    ready = asyncio.run(plugin.pop_ready_batches(context))
+
+    assert len(ready) == 1
+    message, combined_text = ready[0]
+    assert message.from_user_id == "user-a"
+    assert message.context_token == "token-b"
+    assert combined_text == "我先说第一段\n还有第二段"
+    store.close()
