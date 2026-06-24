@@ -34,6 +34,52 @@ class FlowStatePlugin(CompanionPlugin):
         "decision_model_enabled": True,
         "decision_max_tokens": 180,
     }
+    config_schema = {
+        "type": "object",
+        "properties": {
+            "check_interval_seconds": {
+                "type": "number",
+                "label": "检查间隔秒",
+                "description": "检查用户是否已经暂停输入的频率。",
+                "default": 1,
+                "minimum": 0.2,
+                "maximum": 60,
+            },
+            "min_silence_seconds": {
+                "type": "number",
+                "label": "最短停顿秒",
+                "default": 6,
+                "minimum": 0,
+                "maximum": 300,
+            },
+            "max_wait_seconds": {
+                "type": "number",
+                "label": "最长等待秒",
+                "default": 45,
+                "minimum": 1,
+                "maximum": 600,
+            },
+            "max_buffer_messages": {
+                "type": "integer",
+                "label": "最多缓存消息数",
+                "default": 8,
+                "minimum": 1,
+                "maximum": 100,
+            },
+            "decision_model_enabled": {
+                "type": "boolean",
+                "label": "启用模型判断",
+                "default": True,
+            },
+            "decision_max_tokens": {
+                "type": "integer",
+                "label": "判断最大 tokens",
+                "default": 180,
+                "minimum": 32,
+                "maximum": 2048,
+            },
+        }
+    }
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)

@@ -60,6 +60,7 @@ class AdminServer:
         app.router.add_post("/api/model/switch", self.api_switch_model)
         app.router.add_post("/api/model/provider", self.api_upsert_model_provider)
         app.router.add_post("/api/plugins/{name}/enabled", self.api_set_plugin_enabled)
+        app.router.add_post("/api/plugins/{name}/config", self.api_set_plugin_config)
         self.runner = web.AppRunner(app)
         await self.runner.setup()
         self.site = web.TCPSite(self.runner, self.settings.admin.host, self.settings.admin.port)
@@ -213,6 +214,19 @@ class AdminServer:
         await self.plugin_manager.set_enabled(name, enabled)
         return web.json_response({"ok": True, "name": name, "enabled": enabled})
 
+    async def api_set_plugin_config(self, request: web.Request) -> web.Response:
+        name = request.match_info["name"]
+        data = await request.json()
+        config = data.get("config", data)
+        if not isinstance(config, dict):
+            raise web.HTTPBadRequest(text="config must be an object")
+        try:
+            saved_config = await self.plugin_manager.set_config(name, config)
+        except ValueError as exc:
+            raise web.HTTPBadRequest(text=str(exc)) from exc
+        logging.info("[admin] plugin config updated name=%s", name)
+        return web.json_response({"ok": True, "name": name, "config": saved_config})
+
 
 def _json_object(value: Any, field_name: str) -> dict[str, Any]:
     if value in (None, ""):
@@ -243,6 +257,7 @@ HTML = r"""<!doctype html>
     button { border: 1px solid #b8c2d3; background: #fff; border-radius: 6px; padding: 6px 10px; cursor: pointer; }
     button.primary { background: #2454d6; color: #fff; border-color: #2454d6; }
     input, select, textarea { border: 1px solid #c9d2e3; border-radius: 6px; padding: 7px 8px; width: 100%; }
+    input[type="checkbox"] { width: auto; }
     textarea { min-height: 100px; resize: vertical; }
     label { display: block; font-size: 13px; color: #445064; margin: 8px 0 4px; }
     .hidden { display: none !important; }
@@ -432,8 +447,51 @@ HTML = r"""<!doctype html>
     function renderPlugins() {
       document.getElementById('tab-plugins').innerHTML = `<div class="panel"><h3>插件</h3>${state.plugins.map(p => `
         <label><input type="checkbox" ${p.enabled?'checked':''} onchange="setPlugin('${escapeAttr(p.name)}', this.checked)" /> ${escapeHtml(p.name)}</label>
-        <div class="muted">${escapeHtml(p.description)}<br>运行中：${p.running ? '是' : '否'}</div>
-        <pre>${escapeHtml(JSON.stringify(p.config || {}, null, 2))}</pre>`).join('<hr>')}</div>`;
+        <div class="muted">${escapeHtml(p.description)}<br>
+          版本：${escapeHtml(p.version || '未知')} · 状态：${p.running ? '正常' : (!p.manager_started && p.enabled ? '等待微信连接' : (p.enabled ? '后台任务已停止' : '已关闭'))} · 类型：${p.has_background_task ? '后台任务' : '事件响应'} · 模块：${escapeHtml(p.module || '')}
+          ${p.author ? ` · 作者：${escapeHtml(p.author)}` : ''}</div>
+        ${renderPluginConfigForm(p)}`).join('<hr>')}</div>`;
+    }
+
+    function renderPluginConfigForm(plugin) {
+      const schema = plugin.config_schema || {};
+      const properties = schema.properties || {};
+      const keys = Object.keys(properties);
+      if (!keys.length) return `<pre>${escapeHtml(JSON.stringify(plugin.config || {}, null, 2))}</pre>`;
+      return `<div class="grid">${keys.map(key => renderPluginField(plugin, key, properties[key] || {})).join('')}</div>
+        <div class="toolbar"><button class="primary" onclick="savePluginConfig('${escapeAttr(plugin.name)}')">保存插件配置</button><span class="muted">保存后会立即应用；后台任务会自动重启。</span></div>`;
+    }
+
+    function renderPluginField(plugin, key, spec) {
+      const id = pluginFieldId(plugin.name, key);
+      const value = plugin.config?.[key] ?? spec.default ?? '';
+      const label = spec.label || key;
+      const type = spec.type || 'string';
+      const description = spec.description ? `<div class="muted">${escapeHtml(spec.description)}</div>` : '';
+      if (Array.isArray(spec.enum)) {
+        return `<div><label>${escapeHtml(label)}</label><select id="${id}" onchange="markDirty()">${spec.enum.map(option =>
+          `<option value="${escapeAttr(option)}" ${String(value) === String(option) ? 'selected' : ''}>${escapeHtml(option)}</option>`
+        ).join('')}</select>${description}</div>`;
+      }
+      if (type === 'boolean') {
+        return `<div><label><input id="${id}" type="checkbox" ${value ? 'checked' : ''} onchange="markDirty()" /> ${escapeHtml(label)}</label>${description}</div>`;
+      }
+      if (type === 'integer' || type === 'number') {
+        const step = type === 'integer' ? '1' : 'any';
+        const min = spec.minimum === undefined ? '' : ` min="${escapeAttr(spec.minimum)}"`;
+        const max = spec.maximum === undefined ? '' : ` max="${escapeAttr(spec.maximum)}"`;
+        return `<div><label>${escapeHtml(label)}</label><input id="${id}" type="number" step="${step}"${min}${max} oninput="markDirty()" value="${escapeAttr(String(value))}" />${description}</div>`;
+      }
+      if (type === 'array') {
+        const text = Array.isArray(value) ? value.join('\n') : String(value || '');
+        return `<div class="full"><label>${escapeHtml(label)}</label><textarea id="${id}" oninput="markDirty()">${escapeHtml(text)}</textarea><div class="muted">每行一项。</div>${description}</div>`;
+      }
+      if (type === 'object') {
+        return `<div class="full"><label>${escapeHtml(label)}</label><textarea id="${id}" oninput="markDirty()">${escapeHtml(JSON.stringify(value || {}, null, 2))}</textarea>${description}</div>`;
+      }
+      const inputType = spec.secret ? 'password' : 'text';
+      const placeholder = spec.secret && spec.configured ? '已配置；留空保留原值' : '';
+      return `<div><label>${escapeHtml(label)}</label><input id="${id}" type="${inputType}" placeholder="${escapeAttr(placeholder)}" oninput="markDirty()" value="${escapeAttr(String(value))}" />${description}</div>`;
     }
 
     function renderMemory() {
@@ -458,6 +516,33 @@ HTML = r"""<!doctype html>
     }
     function newProvider() { selectedProvider = 'custom_new'; state.model.providers.push({name:'custom_new', api_format:'openai_compatible', has_api_key:false, api_key_masked:'', base_url:'https://your-api-host.example/v1', model:'your-model-name', endpoint_path:'/chat/completions', max_tokens:1024, temperature:0.7, timeout_seconds:60, headers:{}, extra_body:{}}); renderModel(); markDirty(); }
     async function setPlugin(name, enabled) { await api('/api/plugins/' + encodeURIComponent(name) + '/enabled', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled})}); await loadState(true); }
+    async function savePluginConfig(name) {
+      try {
+        const plugin = state.plugins.find(p => p.name === name);
+        const properties = plugin?.config_schema?.properties || {};
+        const config = {};
+        for (const [key, spec] of Object.entries(properties)) config[key] = readPluginField(name, key, spec || {});
+        await api('/api/plugins/' + encodeURIComponent(name) + '/config', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({config})});
+        dirty = false;
+        status.textContent = `插件 ${name} 配置已保存`;
+        await loadState(true);
+      } catch (err) {
+        status.textContent = `插件配置保存失败：${err.message}`;
+        alert(`插件配置保存失败：${err.message}`);
+      }
+    }
+    function readPluginField(pluginName, key, spec) {
+      const element = document.getElementById(pluginFieldId(pluginName, key));
+      if (!element) return null;
+      const type = spec.type || 'string';
+      if (type === 'boolean') return element.checked;
+      if (type === 'integer') return Number.parseInt(element.value || '0', 10);
+      if (type === 'number') return Number.parseFloat(element.value || '0');
+      if (type === 'array') return element.value.split('\n').map(v => v.trim()).filter(Boolean);
+      if (type === 'object') return JSON.parse(element.value || '{}');
+      return element.value;
+    }
+    function pluginFieldId(pluginName, key) { return 'plugin_' + String(pluginName + '_' + key).replace(/[^a-zA-Z0-9_]/g, '_'); }
     function table(rows, keys) { if (!rows || !rows.length) return '<p class="muted">暂无</p>'; return `<table><thead><tr>${keys.map(k=>`<th>${k}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${keys.map(k=>`<td>${escapeHtml(String(r[k] ?? ''))}</td>`).join('')}</tr>`).join('')}</tbody></table>`; }
     function escapeHtml(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
     function escapeAttr(s) { return escapeHtml(String(s)); }

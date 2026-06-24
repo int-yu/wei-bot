@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "the-one-hello-plugin"
+version = "0.1.0"
+description = "Minimal third-party plugin example for The One WeChat AI."
+requires-python = ">=3.10"
+
+[project.entry-points."wechat_ai_companion.plugins"]
+hello_plugin = "hello_plugin:HelloPlugin"
+
+[tool.setuptools]
+py-modules = ["hello_plugin"]

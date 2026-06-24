@@ -8,7 +8,7 @@ import time
 from .config import Settings
 from .llm import ModelRouter
 from .memory import MemoryStore
-from .plugins import PluginManager
+from .plugins import PluginEvents, PluginManager
 from .reply_format import DEFAULT_MAX_REPLY_SEGMENTS, build_reply_format_rules, split_reply_segments
 from .wechat_openclaw import OpenClawWeChatClient, WeChatInboundMessage
 
@@ -159,6 +159,11 @@ class CompanionBot:
         if user_id not in self._welcomed_users:
             self._welcomed_users.add(user_id)
             logging.info("[command] first_contact user=%s send_help=true", user_id)
+            if self.plugin_manager:
+                await self.plugin_manager.emit_event(
+                    PluginEvents.COMMAND_HANDLED,
+                    payload={"message": message, "command": "first_contact", "reply": HELP_TEXT},
+                )
             await self.wechat.send_text(user_id, message.context_token, HELP_TEXT)
             logging.info("[message:out] user=%s text=%s", user_id, HELP_TEXT)
             return
@@ -166,6 +171,15 @@ class CompanionBot:
         command_reply = await self._handle_command(message, agent.persona)
         if command_reply is not None:
             logging.info("[command] handled user=%s command=%s", user_id, text.split(maxsplit=1)[0])
+            if self.plugin_manager:
+                await self.plugin_manager.emit_event(
+                    PluginEvents.COMMAND_HANDLED,
+                    payload={
+                        "message": message,
+                        "command": text.split(maxsplit=1)[0],
+                        "reply": command_reply,
+                    },
+                )
             await self.wechat.send_text(user_id, message.context_token, command_reply)
             logging.info("[message:out] user=%s text=%s", user_id, command_reply)
             return
@@ -195,6 +209,11 @@ class CompanionBot:
         user_message_id = self.memory.add_message(user_id, "user", user_text)
         self.memory.relation_delta(user_id, familiarity_delta=1)
         logging.info("[memory] hot_context appended user=%s message_id=%s", user_id, user_message_id)
+        if self.plugin_manager:
+            await self.plugin_manager.emit_event(
+                PluginEvents.REPLY_STARTED,
+                payload={"message": message, "user_text": user_text, "source": source},
+            )
 
         reply_version = self._interrupt_versions.get(user_id, 0)
         sent_segments: list[str] = []
@@ -220,6 +239,16 @@ class CompanionBot:
                         len(sent_segments),
                         len(segments) - len(sent_segments),
                     )
+                    if self.plugin_manager:
+                        await self.plugin_manager.emit_event(
+                            PluginEvents.REPLY_INTERRUPTED,
+                            payload={
+                                "message": message,
+                                "source": source,
+                                "sent_segments": len(sent_segments),
+                                "remaining_segments": len(segments) - len(sent_segments),
+                            },
+                        )
                     break
                 await self.wechat.send_text(user_id, message.context_token, segment)
                 assistant_message_id = self.memory.add_message(user_id, "assistant", segment)
@@ -232,6 +261,17 @@ class CompanionBot:
                     segment,
                 )
                 logging.info("[memory] hot_context appended user=%s message_id=%s", user_id, assistant_message_id)
+                if self.plugin_manager:
+                    await self.plugin_manager.emit_event(
+                        PluginEvents.REPLY_SEGMENT_SENT,
+                        payload={
+                            "message": message,
+                            "source": source,
+                            "segment": segment,
+                            "index": index + 1,
+                            "total": len(segments),
+                        },
+                    )
             if sent_segments and self.plugin_manager:
                 await self.plugin_manager.after_ai_reply(message, "\n".join(sent_segments))
         finally:

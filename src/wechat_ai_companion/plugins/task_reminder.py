@@ -85,6 +85,34 @@ class TaskReminderPlugin(CompanionPlugin):
         "schedule_remind_minutes": 15,
         "max_due_messages_per_check": 5,
     }
+    config_schema = {
+        "type": "object",
+        "properties": {
+            "check_interval_seconds": {
+                "type": "integer",
+                "label": "检查间隔秒",
+                "default": 60,
+                "minimum": 15,
+                "maximum": 86400,
+            },
+            "timezone": {"type": "string", "label": "时区", "default": "Asia/Shanghai"},
+            "allow_context_token_reuse": {"type": "boolean", "label": "允许复用 context_token 提醒", "default": True},
+            "schedule_remind_minutes": {
+                "type": "integer",
+                "label": "课表提前提醒分钟",
+                "default": 15,
+                "minimum": 0,
+                "maximum": 1440,
+            },
+            "max_due_messages_per_check": {
+                "type": "integer",
+                "label": "每次最多发送提醒数",
+                "default": 5,
+                "minimum": 1,
+                "maximum": 100,
+            },
+        }
+    }
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)

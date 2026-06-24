@@ -52,6 +52,43 @@ class WeatherMonitorPlugin(CompanionPlugin):
         "request_timeout_seconds": 20,
         "write_on_message_if_cached": True,
     }
+    config_schema = {
+        "type": "object",
+        "properties": {
+            "check_interval_seconds": {
+                "type": "integer",
+                "label": "检查间隔秒",
+                "default": 3600,
+                "minimum": 60,
+                "maximum": 86400,
+            },
+            "run_at": {
+                "type": "string",
+                "label": "每日执行时间",
+                "default": "07:30",
+                "pattern": r"(?:[01]\d|2[0-3]):[0-5]\d",
+            },
+            "timezone": {"type": "string", "label": "时区", "default": "Asia/Shanghai"},
+            "provider": {
+                "type": "string",
+                "label": "天气提供方",
+                "default": "open_meteo",
+                "enum": ["open_meteo"],
+            },
+            "location_name": {"type": "string", "label": "位置名称", "default": "北京"},
+            "latitude": {"type": "number", "label": "纬度", "default": 39.9042, "minimum": -90, "maximum": 90},
+            "longitude": {"type": "number", "label": "经度", "default": 116.4074, "minimum": -180, "maximum": 180},
+            "forecast_days": {"type": "integer", "label": "预报天数", "default": 1, "minimum": 1, "maximum": 16},
+            "request_timeout_seconds": {
+                "type": "integer",
+                "label": "请求超时秒",
+                "default": 20,
+                "minimum": 1,
+                "maximum": 120,
+            },
+            "write_on_message_if_cached": {"type": "boolean", "label": "新用户发消息时补写当天天气", "default": True},
+        }
+    }
 
     async def on_start(self, context: PluginContext) -> list[PluginResult]:
         return [

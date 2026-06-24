@@ -25,6 +25,60 @@ class ProactiveResponsePlugin(CompanionPlugin):
         "quiet_hours_end": "08:00",
         "opt_out_patterns": ["/mute", "别主动", "不要主动", "不要再主动", "别再主动"],
     }
+    config_schema = {
+        "type": "object",
+        "properties": {
+            "check_interval_seconds": {
+                "type": "integer",
+                "label": "检查间隔秒",
+                "default": 300,
+                "minimum": 15,
+                "maximum": 86400,
+            },
+            "min_inactive_minutes": {
+                "type": "integer",
+                "label": "最短不活跃分钟",
+                "default": 30,
+                "minimum": 1,
+                "maximum": 10080,
+            },
+            "cooldown_minutes": {
+                "type": "integer",
+                "label": "冷却分钟",
+                "default": 180,
+                "minimum": 1,
+                "maximum": 10080,
+            },
+            "max_messages_per_day": {
+                "type": "integer",
+                "label": "每日主动上限",
+                "default": 3,
+                "minimum": 0,
+                "maximum": 50,
+            },
+            "allow_context_token_reuse": {"type": "boolean", "label": "允许复用 context_token 发送", "default": True},
+            "quiet_hours_start": {
+                "type": "string",
+                "label": "安静时间开始",
+                "default": "23:30",
+                "pattern": r"(?:[01]\d|2[0-3]):[0-5]\d",
+            },
+            "quiet_hours_end": {
+                "type": "string",
+                "label": "安静时间结束",
+                "default": "08:00",
+                "pattern": r"(?:[01]\d|2[0-3]):[0-5]\d",
+            },
+            "opt_out_patterns": {
+                "type": "array",
+                "label": "拒绝主动消息关键词",
+                "description": "每行一个关键词。",
+                "default": [],
+                "items": {"type": "string"},
+                "maxItems": 100,
+            },
+        }
+    }
 
     def __init__(self, config: dict[str, Any] | None = None) -> None:
         super().__init__(config)

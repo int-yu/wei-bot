@@ -1,182 +1,176 @@
-# 插件规范
+# 插件开发规范
 
-插件目录：
+插件分为两类：
 
-```text
-src/wechat_ai_companion/plugins/
-```
+- 内置插件：随主项目发布，位于 `src/wechat_ai_companion/plugins/`。
+- 第三方插件：独立 Python 包，通过 entry point 安装发现，不需要修改主项目源码。
 
-## 配置开关
+插件默认按可信代码运行。当前没有进程级沙箱或权限隔离；安装第三方插件前必须审查来源和代码。
 
-在 `config.yaml` 中控制插件启停：
-
-```yaml
-plugins:
-  enabled:
-    flow_state: true
-    proactive_response: true
-  config:
-    flow_state:
-      min_silence_seconds: 6
-      max_wait_seconds: 45
-      decision_model_enabled: true
-    proactive_response:
-      check_interval_seconds: 300
-      min_inactive_minutes: 30
-      cooldown_minutes: 180
-      max_messages_per_day: 3
-      allow_context_token_reuse: true
-```
-
-如果旧版 `config.yaml` 没有 `plugins` 字段，项目会默认启用 `proactive_response`。要关闭它，显式写：
-
-```yaml
-plugins:
-  enabled:
-    proactive_response: false
-```
-
-## 插件格式
-
-新插件继承 `CompanionPlugin`：
+## 最小插件
 
 ```python
-from __future__ import annotations
-
-from .base import CompanionPlugin, PluginContext, PluginResult
-from ..wechat_openclaw import WeChatInboundMessage
+from wechat_ai_companion.plugins import CompanionPlugin, PluginContext
+from wechat_ai_companion.wechat_openclaw import WeChatInboundMessage
 
 
 class MyPlugin(CompanionPlugin):
     name = "my_plugin"
     description = "What this plugin does."
-    default_config = {
-        "enabled_feature": True,
+    version = "0.1.0"
+    author = "Your name"
+    default_config = {"reply_text": "hello"}
+    config_schema = {
+        "type": "object",
+        "properties": {
+            "reply_text": {
+                "type": "string",
+                "label": "回复文本",
+                "description": "Web 后台会根据此配置生成输入框。",
+                "default": "hello",
+                "minLength": 1,
+                "maxLength": 500,
+            }
+        },
     }
 
-    async def on_message_received(
+    async def handle_command(
         self,
         context: PluginContext,
         message: WeChatInboundMessage,
-    ) -> list[PluginResult]:
-        return [PluginResult(self.name, "observed_message", message.from_user_id)]
+    ) -> str | None:
+        if message.text.strip() == "/my-plugin":
+            return str(self.config["reply_text"])
+        return None
 ```
 
-然后在 `plugins/manager.py` 的 `BUILTIN_PLUGINS` 注册：
+完整可安装示例见 `examples/hello_plugin/`。
+
+## 独立包注册
+
+第三方包的 `pyproject.toml`：
+
+```toml
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "my-the-one-plugin"
+version = "0.1.0"
+requires-python = ">=3.10"
+
+[project.entry-points."wechat_ai_companion.plugins"]
+my_plugin = "my_plugin:MyPlugin"
+
+[tool.setuptools]
+py-modules = ["my_plugin"]
+```
+
+开发安装：
+
+```powershell
+python -m pip install -e .\path\to\my-the-one-plugin
+```
+
+重启主程序后，插件会出现在 Web 后台。新发现的第三方插件默认关闭，需要在后台手动启用，或在 `config.yaml` 中配置：
+
+```yaml
+plugins:
+  enabled:
+    my_plugin: true
+```
+
+插件名必须匹配 `[a-z][a-z0-9_]{1,63}`，并且不能与已加载插件重名。入口必须导出 `CompanionPlugin` 子类。加载失败、名称非法或重名时，主程序会记录错误并跳过，不会阻止其他插件启动。
+
+## Web 配置 Schema
+
+`config_schema` 使用 JSON Schema 风格的受限字段：
+
+- `type`：`string`、`boolean`、`integer`、`number`、`array`、`object`。
+- `label`、`description`：后台显示文本。
+- `default`：默认值。
+- `enum`：渲染下拉选项。
+- `minimum`、`maximum`：数值范围。
+- `minLength`、`maxLength`、`pattern`：字符串校验。
+- `minItems`、`maxItems`、`items.type`：数组校验。
+- `secret: true`：密码输入框；现有值不会通过 API 明文回显，留空会保留原值。
+
+配置保存在 SQLite 的 `core_plugin_config` 命名空间中，优先级高于 `config.yaml`。保存后插件的后台任务会重启并立即使用新配置。未知字段和无效值会返回明确错误，不会静默覆盖为默认值。
+
+## Hook
+
+- `on_start(context)`：插件启用或配置重载时调用。
+- `on_stop(context)`：插件关闭、配置重载或主程序停止时调用，用于释放资源。
+- `on_message_received(context, message)`：收到微信用户消息后调用。
+- `handle_command(context, message)`：返回字符串时，主 Bot 发送该内容并跳过普通 AI 回复。
+- `maybe_defer_reply(context, message)`：返回 `True` 时暂缓普通回复，适合心流插件。
+- `after_ai_reply(context, message, reply)`：AI 已发送至少一段回复后调用。
+- `after_memory_maintenance(context, wx_user_id, extracted_count, compressed)`：长期记忆提取和摘要压缩后调用。
+- `on_event(context, event)`：订阅统一事件总线。
+- `background_loop(context, stop_event)`：插件后台任务；必须响应取消和 `stop_event`。
+
+前台 Hook 默认超时为 30 秒，并由管理器隔离异常。插件可通过 `hook_timeout_seconds` 调整。只有重写 `background_loop` 的插件才会创建后台任务；纯命令或事件插件会正常显示为“事件响应”类型。后台任务异常会被记录，Web 后台会显示任务已停止，但主微信轮询不会退出。
+
+## 事件总线
+
+从 `PluginEvents` 引用事件名，不要在插件中重复硬编码：
+
+- `MESSAGE_RECEIVED`
+- `COMMAND_HANDLED`
+- `REPLY_STARTED`
+- `REPLY_DEFERRED`
+- `REPLY_SEGMENT_SENT`
+- `REPLY_INTERRUPTED`
+- `REPLY_SENT`
+- `MEMORY_MAINTENANCE`
+- `PLUGIN_ENABLED_CHANGED`
+- `PLUGIN_CONFIG_CHANGED`
+
+事件对象：
 
 ```python
-BUILTIN_PLUGINS = {
-    FlowStatePlugin.name: FlowStatePlugin,
-    ProactiveResponsePlugin.name: ProactiveResponsePlugin,
-    MyPlugin.name: MyPlugin,
-}
+from wechat_ai_companion.plugins import PluginEvent, PluginEvents
+
+async def on_event(self, context, event: PluginEvent):
+    if event.event_type == PluginEvents.REPLY_INTERRUPTED:
+        user_id = event.payload["message"].from_user_id
 ```
 
-## 可用 Hook
+事件按插件加载顺序串行派发。事件处理器应保持轻量；耗时工作应转入插件自己的队列或后台任务。
+同一业务不要同时写在专用 Hook 和对应事件中，例如不要同时使用 `on_message_received` 与 `MESSAGE_RECEIVED` 处理同一条消息，否则会执行两次。
 
-- `on_start(context)`：登录成功后调用。
-- `on_message_received(context, message)`：收到微信用户消息后调用。
-- `handle_command(context, message)`：可选命令处理；返回字符串时由主 Bot 直接发送该回复，并跳过普通 AI 回复。
-- `maybe_defer_reply(context, message)`：可选心流控制；返回 `True` 时主 Bot 暂不回复，由插件后续调用延迟回复回调。
-- `after_ai_reply(context, message, reply)`：AI 正常回复发送后调用。
-- `after_memory_maintenance(context, wx_user_id, extracted_count, compressed)`：长期记忆提取和中期摘要压缩后调用。
-- `background_loop(context, stop_event)`：后台循环任务，适合提醒、主动响应、定时同步。
+## PluginContext
 
-`PluginContext` 提供：
+- `settings`：全局配置，只读使用。
+- `wechat`：微信客户端，可发送消息。
+- `memory`：SQLite 记忆和插件状态存储。
+- `llm`：当前模型路由器。
+- `deferred_reply_handler`：主 Bot 提供的延迟回复回调。
 
-- `settings`：全局配置。
-- `wechat`：微信发送/轮询客户端。
-- `memory`：SQLite 记忆存储。
-- `llm`：DeepSeek 客户端。
-- `deferred_reply_handler`：主 Bot 提供的延迟回复回调，心流类插件可以在后台判断完成后调用。
+插件私有状态应使用自身名称作为命名空间：
 
-## 心流插件
-
-内置插件：`flow_state`
-
-工作方式：
-
-1. 普通聊天消息先进入心流缓存，不立刻触发 AI 回复。
-2. 用户停顿超过 `min_silence_seconds` 后，插件会请模型判断“用户是否暂时讲完了”。
-3. 如果模型认为还没讲完，会继续等待；超过 `max_wait_seconds` 会强制回复，避免一直卡住。
-4. 命令、插件命令不会进入心流缓存。
-5. 主 Bot 生成回复后会拆成短消息发送；如果发送过程中收到用户新消息，剩余片段会停止发送。
-
-配置示例：
-
-```yaml
-plugins:
-  enabled:
-    flow_state: true
-  config:
-    flow_state:
-      check_interval_seconds: 1
-      min_silence_seconds: 6
-      max_wait_seconds: 45
-      max_buffer_messages: 8
-      decision_model_enabled: true
-      decision_max_tokens: 180
+```python
+context.memory.set_plugin_state(self.name, user_id, "key", "value")
+value = context.memory.get_plugin_state(self.name, user_id, "key")
 ```
 
-## 主动响应插件
+## 内置插件
 
-内置插件：`proactive_response`
+- `flow_state`：合并用户连续短消息，并判断何时开始回复。
+- `proactive_response`：根据习惯、记忆、安静时间和限额决定是否主动发消息。
+- `weather_monitor`：每日读取 Open-Meteo 天气并写入热上下文。
+- `task_reminder`：任务、提醒和课表，到点提醒不占主动响应限额。
 
-工作方式：
+所有内置插件配置都可以在 Web 后台的“插件”Tab 修改。
 
-1. 用户至少发过一条消息后，插件记录最近的 `context_token`。
-2. 后台定时检查已知用户。
-3. 结合长期结构化记忆、中期摘要、最近对话和不活跃时间，请 AI 判断是否应该主动发消息。
-4. 满足冷却时间和每日上限后发送。
+## 开发检查
 
-注意：微信 iLink 协议要求发送消息携带 `context_token`。主动响应只能复用最近一次用户消息的 token；如果服务端不接受旧 token，发送可能失败。要只生成决策、不主动发送，可以设置：
+提交第三方插件前至少检查：
 
-```yaml
-plugins:
-  config:
-    proactive_response:
-      allow_context_token_reuse: false
-```
-
-## 天气监测插件
-
-内置插件：`weather_monitor`
-
-工作方式：
-1. 每天到达 `run_at` 后请求一次天气接口。
-2. 将天气摘要写入每个已知用户的热上下文，角色为 `system`，因此 AI 当天回复时可以自然参考。
-3. 如果当天先获取了天气，后来才有新用户发消息，插件会把缓存的当天天气补写给该用户。
-
-默认使用 Open-Meteo 经纬度接口，不需要 API Key。城市需要通过经纬度配置：
-
-```yaml
-plugins:
-  enabled:
-    weather_monitor: true
-  config:
-    weather_monitor:
-      run_at: "07:30"
-      timezone: Asia/Shanghai
-      location_name: 北京
-      latitude: 39.9042
-      longitude: 116.4074
-```
-
-## 任务和提醒插件
-
-内置插件：`task_reminder`
-
-支持命令：
-
-- `/remind 明天 09:00 交作业`：添加一次性提醒。
-- `/todo 买牛奶`：添加无截止时间任务。
-- `/task 明天 18:00 完成实验报告`：添加带截止时间的任务。
-- `/tasks`：查看未完成任务和提醒。
-- `/schedule add 周一 08:00-09:40 高数`：添加每周课表。
-- `/schedule`：查看课表。
-- `/done ID`：标记完成。
-- `/cancel ID`：取消任务、提醒或课表。
-
-也支持明确触发词，例如“提醒我明天下午3点交作业”“帮我记住周一 08:00-09:40 高数课表”。普通闲聊不会被强行猜成任务。
-
-提醒消息由 `task_reminder` 自己发送，不会计入 `proactive_response` 的每日主动消息上限。它仍然受微信 iLink `context_token` 限制：用户至少需要先发过一条消息，插件才有可复用的发送 token。
+1. 禁用插件后不再处理消息或运行后台任务。
+2. 配置保存、重启和进程重启后仍然有效。
+3. Hook 抛异常时不会影响其他插件和主轮询。
+4. 后台任务能正确处理 `asyncio.CancelledError`。
+5. 不在日志、事件或 Web 状态中输出 API Key、token 等秘密。
+6. 网络请求设置明确超时，并避免阻塞事件循环。
